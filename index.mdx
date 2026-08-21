@@ -1,20 +1,1593 @@
----
-title: "Introduction"
-description: "Welcome to your project"
----
+# LR Framework Documentation
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+Local API reference for the LRrotations backend. Content started as a mirrored docs scrape and has been rebranded to `LR`. Prefer verifying signatures against source in this repo when behavior matters.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+For **Registering Your Rotation** (including multi-routine / Active Routine dropdown), see [`Ttd/LR_REGISTERING_ROTATION.md`](Ttd/LR_REGISTERING_ROTATION.md).
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## Table of Contents
+
+- [routines/Active Routine](#routines-active-routine)
+- [framework/Verified APIs](#framework-verified-apis)
+- [alert/Alert Basics](#alert-alert-basics)
+- [functions/Frame](#functions-frame)
+- [getting-started/callbacks](#getting-started-callbacks)
+- [getting-started/recommended-addons](#getting-started-recommended-addons)
+- [getting-started/spells](#getting-started-spells)
+- [hooks/bigwigs](#hooks-bigwigs)
+- [hooks/encounter-manager](#hooks-encounter-manager)
+- [hooks/keyboard](#hooks-keyboard)
+- [hooks/state-registrar](#hooks-state-registrar)
+- [index](#index)
+- [interface/config-integration](#interface-config-integration)
+- [interface/config-system](#interface-config-system)
+- [interface/overview](#interface-overview)
+- [interface/ui-elements](#interface-ui-elements)
+- [item-handler/item-functions](#item-handler-item-functions)
+- [item-handler/overview](#item-handler-overview)
+- [lists-and-units/Lists](#lists-and-units-lists)
+- [lists-and-units/VirtualUnits](#lists-and-units-virtualunits)
+- [misc/CombatLogReader](#misc-combatlogreader)
+- [misc/Draw](#misc-draw)
+- [misc/Macro](#misc-macro)
+- [misc/Toast](#misc-toast)
+- [missiles/properties](#missiles-properties)
+- [spell](#spell)
+- [status-frame/basic-usage](#status-frame-basic-usage)
+- [unit-properties/AuraTracking](#unit-properties-auratracking)
+- [unit-properties/Unit - Properties](#unit-properties-unit---properties)
+- [unit-properties/Unit Methods](#unit-properties-unit-methods)
+
+## routines/Active Routine
+
+Verified against `Routine/Routine.lua` and `Interface/Layout/General.lua`.
+
+- Register multiple namespaces per class+spec with `LR:RegisterRoutine(fn, class, spec, namespace)`.
+- General UI dropdown **Active Routine** writes `general.routineNamespace` and calls `LR:LoadRoutine`.
+- No UI reload: the selected namespace's function runs on the next `ExecuteRoutine()` tick.
+- Dropdown selection is authority — do not gate an entire PvP/PvE APL on arena, battleground, or `UnitIsPVP` flags.
+
+See [`Ttd/LR_REGISTERING_ROTATION.md`](Ttd/LR_REGISTERING_ROTATION.md).
+
+## framework/Verified APIs
+
+APIs confirmed in this backend (use these names in rotations):
+
+| API | Source | Notes |
+| --- | --- | --- |
+| `LR:RegisterRoutine(fn, class, spec, namespace)` | `Routine/Routine.lua` | Registers one selectable routine |
+| `LR:LoadRoutine(class, spec, namespace)` | `Routine/Routine.lua` | Marks namespace loaded / current |
+| `LR:ExecuteRoutine()` | `Routine/Routine.lua` | Runs selected routine each tick |
+| `LR:NotifyRoutinesChanged()` | `Routine/Routine.lua` | Refreshes Active Routine dropdown options |
+| `LR:AddGlobalToggle(options)` | `GuiBuilder/StatBuilder.lua` | Builds `LR.Rotation.Toggle`, `.Cooldown`, `.Interrupt`, `.Defensives`, `.AoE` |
+| `LR.alert(input, iconID, payload)` | `Alert/Alert.lua` | On-screen alert |
+| `LR.Toast:Show(title, message)` | `Interface/Toast.lua` | Toast notification |
+| `LR:Logger(message, msgType)` | launcher / core | Chat/log feedback (`info`, `warning`, `error`, `success`) |
+| `LR:OnUpdate(callback, enabled)` | `Main.lua` | Frame update callback |
+| `LR:RemoveCallback(id, isUpdate)` | `Main.lua` | Remove callback |
+| `LR.Config:Read(key, default?)` / `Write` | Config module | Persisted settings |
+| `LR.NumberValue(value, fallback)` | `Util/Secure.lua` | Safe number unwrap |
+| `LR.GetDrStage(unit, category)` | rotations `core.lua` | PvP DR stage 0–3 (`incap` / `disorient` / `stun`) |
+| `LR.GetDrMultiplier(unit, category)` | rotations `core.lua` | Next CC duration mult: 1.0 / 0.5 / 0.25 / 0 |
+| `LR.CanApplyCc(unit, category, minMult)` | rotations `core.lua` | True if next CC meets min DR (default 0.5) |
+
+Rotation packs under `C:\WGG\LR` also expose helpers such as `LR.SafeLoadConfig`, `LR.IsHealImmune`, `LR.IsCcImmune`, `LR.UnitNeedsDispel`, `LR.pvp_incoming_cc_spells`, and `LR.pvp_burst_auras` in `core.lua` — those are rotation-layer utilities, not framework UI APIs.
+
+## alert/Alert Basics
+
+### Example Alerts with Icons and Sound in Lua
+
+Provides practical examples of using LR.alert for common scenarios such as proc alerts, custom duration messages, and level-up notifications with associated sounds. Requires the LR framework.
+
+```lua
+-- Proc alert with spell icon
+LR.alert("Bloodlust Active!", 2825)
+
+-- Custom duration alert
+LR.alert({
+    string = "Boss Incoming!",
+    time = 5,  -- Show for 5 seconds
+}, "Interface\Icons\ability_warrior_charge")
+
+-- Alert with sound
+LR.alert("Level Up!", "Interface\Icons\achievement_level_80", {
+    soundID = 888  -- Level up sound
+})
+```
+
+
+## functions/Frame
+
+### Callback Management and Best Practices
+
+Guidelines for managing callbacks, including enabling/disabling, performance optimization, and memory management.
+
+```APIDOC
+## Callback Management and Best Practices
+
+### Performance Optimization
+- **Use `OnUpdate` for Non-Critical Operations**: Suitable for interface updates, status checks, and data collection.
+- **Use `OnTick` for Time-Sensitive Operations**: Ideal for cast tracking, interrupt timing, and precise rotation logic.
+- **Enable/Disable Callbacks as Needed**: Register callbacks with `enabled = false` and enable them only when necessary to conserve resources.
+
+### Memory Management
+- **Remove Unused Callbacks**: Always remove callbacks that are no longer needed using `LR:RemoveCallback` to prevent memory leaks.
+
+### Notes
+- Avoid excessive processing in update callbacks. Keep operations light and efficient to prevent frame rate drops.
+
+### Example: Enabling/Disabling Callbacks
+```lua
+-- Store callback reference
+local myCallbackId
+
+-- Register with disabled state
+myCallbackId = LR:OnUpdate(function(elapsed)
+    -- Heavy processing here
+end, false)
+
+-- Enable only when needed
+if inCombat then
+    LR.updateCallbacks[myCallbackId].enabled = true
+else
+    LR.updateCallbacks[myCallbackId].enabled = false
+end
+```
+
+### Example: Removing Callbacks
+```lua
+-- When a module is disabled or no longer needs the callback
+LR:RemoveCallback(callbackId, true)
+```
+```
+
+
+## getting-started/callbacks
+
+### Arc Check for Cleave Spells
+
+An example of a callback for cleave spells that checks if any active enemies are within a specific arc and range of the player. It iterates through active enemies.
+
+```lua
+spells.Revenge:callback(function(spell, logic)
+    LR.activeenemies:each(function(enemy)
+        if enemy.inarcof(player, 8, 180) then
+            return spell:cast(player)
+        end
+    end)
+end)
+```
+
+
+## getting-started/recommended-addons
+
+### Test LR Functions and Get Unit Info with WowLua
+
+Provides an example of using the WowLua addon to test Lua code snippets. This snippet retrieves player and target information, then prints their health and distance to each other, demonstrating in-game code execution and basic WoW API interaction.
+
+```lua
+local player = LR.UnitManager:Get("player")
+local target = LR.UnitManager:Get("target")
+
+print("Player Health: " .. player.health)
+print("Target Distance: " .. target.distanceto(player))
+```
+
+
+### Inspect LR Objects with DevTool
+
+Demonstrates how to use the DevTool addon to inspect LR objects, such as the player's entity, within the game. This is useful for debugging and understanding the structure of LR's data.
+
+```lua
+DevTool:AddData(LR.UnitManager:Get("player"), "PlayerEntity")
+```
+
+
+## getting-started/spells
+
+### Access Registered Spells, Auras, and Talents (Lua)
+
+This code shows how to access the spells, auras, and talents previously registered with the LR Spell System. It retrieves them from the global 'LR.SpellHandler.Spellbooks' table, specifying the class, spec ID, and namespace. This allows for easy programmatic access to defined abilities.
+
+```lua
+local spells = LR.SpellHandler.Spellbooks.warrior["3"].YourNamespace.spells  
+local auras = LR.SpellHandler.Spellbooks.warrior["3"].YourNamespace.auras  
+local talents = LR.SpellHandler.Spellbooks.warrior["3"].YourNamespace.talents  
+
+```
+
+```lua
+local spells = LR.SpellHandler.Spellbooks.priest["1"].YourNamespace.spells  
+local auras = LR.SpellHandler.Spellbooks.priest["1"].YourNamespace.auras  
+local talents = LR.SpellHandler.Spellbooks.priest["1"].YourNamespace.talents  
+
+```
+
+
+### Register Spells with LR Spell System (Lua)
+
+This code snippet demonstrates how to register spells, auras, and talents for a specific class and specialization using LR's SpellHandler. It takes spell definitions, class name, spec ID, and a namespace as input. Ensure the 'NewSpell' function and 'PopulateSpellbook' are available in your Lua environment.
+
+```lua
+-- Create your spells  
+local NewSpell = LR.SpellHandler.NewSpell  
+LR.SpellHandler.PopulateSpellbook({
+    spells = {
+        AutoAttack = NewSpell(6603),
+        Charge = NewSpell(100),
+        ShieldSlam = NewSpell(23922),
+        Ravager = NewSpell(228920, { radius = 8,}),
+    },
+    auras = {
+        --Add Auras here  
+    },
+    talents = {
+        --Add Talents here  
+    },
+}, "WARRIOR",3,"YourNamespace")  
+
+```
+
+
+## hooks/bigwigs
+
+### Example: Coordinate Pulls with LR
+
+An example Lua function illustrating how to use LR's Boss Mods pull timer for coordination. It checks if a pull is active and the remaining time, enabling actions such as casting pre-pull abilities at the appropriate moment.
+
+```Lua
+-- Example: Pull timer coordination  
+function CheckPullStatus()  
+    if LR.BossMod:ispulling() then  
+        local remaining = LR.BossMod:getpulltimeremaining()  
+        if remaining <= 3 then  
+            -- Do pre-pull ability  
+            CastPrePullAbility()  
+        end  
+    end  
+end  
+```
+
+
+### Example: React to Specific Timer in LR
+
+An example Lua function demonstrating how to react to a specific timer managed by LR's Boss Mods. It checks if a timer exists and its remaining time, allowing for pre-emptive actions like preparing for an ability.
+
+```Lua
+-- Example: React to specific timer  
+function CheckImportantTimer()  
+    if LR.BossMod:hastimer("Important Ability") then  
+        local remaining = LR.BossMod:gettimerremaining("Important Ability")  
+        if remaining < 5 then  
+            -- Prepare for ability  
+            PrepareForAbility()  
+        end  
+    end  
+end  
+```
+
+
+### Get LR Boss Mod Timers
+
+Retrieve and query active timers within LR's Boss Mods. Functions allow fetching all timers, specific timers by text match, checking for timer existence, and getting remaining time. These are essential for real-time raid awareness.
+
+```Lua
+-- Get all active timers  
+local timers = LR.BossMod:getactivetimers()  
+  
+-- Get a specific timer by text match  
+local timer = LR.BossMod:gettimer("timer text")  
+  
+-- Get all timers matching text  
+local matchingTimers = LR.BossMod:gettimers("timer text")  
+  
+-- Check if a specific timer exists  
+local exists = LR.BossMod:hastimer("timer text")  
+  
+-- Get remaining time for a specific timer  
+local remaining = LR.BossMod:gettimerremaining("timer text")  
+```
+
+
+## hooks/encounter-manager
+
+### Get Encounter Information via Lua API
+
+Demonstrates how to retrieve encounter-related information using the Encounter Manager API in Lua. Includes functions to get the current encounter object, its elapsed time, and a list of active boss units.
+
+```lua
+-- Get current encounter info
+local encounter = LR.EncounterManager:GetCurrentEncounter()
+
+-- Get elapsed time of current encounter
+local time = LR.EncounterManager:GetEncounterElapsedTime()
+
+-- Get active boss units
+local bosses = LR.EncounterManager:GetActiveBossUnits()
+
+```
+
+
+## hooks/keyboard
+
+### LR Keybind Format Examples
+
+Illustrates the different formats for defining keybinds in LR's system, including simple keys, keys with modifiers, and mouse buttons.
+
+```Lua
+"A"                    -- Simple key  
+"Shift+A"              -- Modifier + key  
+"Button4"              -- Mouse button 4  
+"Shift+Button5"        -- Modifier + mouse button  
+"MiddleButton"         -- Middle mouse button  
+
+```
+
+
+### Keyboard Hook API Reference
+
+Reference for the LR Keyboard Hook API, covering keybind formats, basic usage patterns like registering, setting, and checking keybinds, and how to integrate with configuration for saving and loading keybinds.
+
+```APIDOC
+## Keyboard Hook API Reference
+
+### Description
+This API allows developers to create custom keyboard and mouse bindings within the LR system. It supports standard keys, mouse buttons (Button4-Button31), and modifier keys (Shift, Ctrl, Alt, etc.).
+
+### Keybind Format
+Keybinds are defined as strings. They can be simple keys, a modifier combined with a key, or mouse buttons.
+
+- **Simple Key**: `"A"`
+- **Modifier + Key**: `"Shift+A"`
+- **Mouse Button**: `"Button4"`
+- **Modifier + Mouse Button**: `"Shift+Button5"`
+- **Special Mouse Buttons**: `"MiddleButton"`
+
+### Basic Usage
+This section details the fundamental operations for interacting with the keybind manager.
+
+#### Registering a Keybind
+`LR.KeyBindManager:RegisterKeybind(keybindId, callbackFunction, description)`
+- `keybindId` (string): A unique identifier for the keybind.
+- `callbackFunction` (function): A function that will be called when the keybind's state changes. It receives a boolean `isPressed` argument.
+- `description` (string): A human-readable description of the keybind's action.
+
+**Example:**
+```lua
+LR.KeyBindManager:RegisterKeybind("my_ability", function(isPressed) 
+    if isPressed then  
+        print("Ability activated!")  
+    end  
+end, "My Ability")  
+```
+
+#### Setting a Keybind
+`LR.KeyBindManager:SetKeybind(keybindId, keybindString)`
+- `keybindId` (string): The ID of the keybind to set.
+- `keybindString` (string): The string representation of the desired keybind (e.g., `"Button4"`, `"Shift+A"`).
+
+**Example:**
+```lua
+LR.KeyBindManager:SetKeybind("my_ability", "Button4")  
+```
+
+#### Checking if a Keybind is Pressed
+`LR.KeyBindManager:IsPressed(keybindId)`
+- `keybindId` (string): The ID of the keybind to check.
+- Returns: `boolean` - `true` if the keybind is currently pressed, `false` otherwise.
+
+**Example:**
+```lua
+local isPressed = LR.KeyBindManager:IsPressed("my_ability")  
+```
+
+#### Getting Keybind Description
+`LR.KeyBindManager:GetKeybindDescription(keybindString)`
+- `keybindString` (string): The string representation of a keybind.
+- Returns: `string` - A readable description of the keybind.
+
+**Example:**
+```lua
+local desc = LR.KeyBindManager:GetKeybindDescription("Shift+Button4")  
+-- Returns: "Shift + Mouse 4"
+```
+
+### Configuration Integration
+This section demonstrates how to save and load keybinds using LR's configuration system.
+
+**Example:**
+```lua
+-- Save/load with config  
+local savedKeybind = LR.Config:Read("my_ability_hotkey") or "F1"  
+LR.KeyBindManager:RegisterKeybind("my_ability", callback, "Description")  
+LR.KeyBindManager:SetKeybind("my_ability", savedKeybind)  
+```
+
+### Error Handling
+- If a `keybindId` is not registered, `IsPressed` will return `false`.
+- Invalid `keybindString` formats provided to `SetKeybind` or `GetKeybindDescription` may result in unexpected behavior or errors.
+```
+
+
+## hooks/state-registrar
+
+### Advanced Damage Tracker Example - Lua
+
+Implements a damage tracking system using the StateExpression. It records individual hits, cleans up old hits based on a time window, and calculates the total damage taken. This example showcases event handling, periodic updates, and custom state management.
+
+```lua
+local StateExpression = LR.StateExpression
+
+-- Create damage tracking state
+local damageTaken = StateExpression:New("damage_taken")
+damageTaken.hits = {} -- Store individual hits
+
+-- Cleanup function for managing the hit window
+local function cleanupOldHits(self, now)
+    local windowStart = now - self.window
+    local removed = 0
+
+    -- Remove old hits
+    while self.hits[1] and self.hits[1].time < windowStart do
+        table.remove(self.hits, 1)
+        removed = removed + 1
+    end
+      
+    -- Recalculate total
+    local total = 0
+    for _, hit in ipairs(self.hits) do
+        total = total + (tonumber(hit.amount) or 0)
+    end
+      
+    -- Update only if changed
+    if total ~= self.value then
+        self.value = total
+    end
+      
+    return removed
+end
+
+-- Setup event handling
+local f = CreateFrame("Frame")
+f:RegisterEvent("UNIT_COMBAT")
+
+-- Periodic cleanup
+local timerFrame = CreateFrame("Frame")
+timerFrame:SetScript("OnUpdate", function(self, elapsed) 
+    if #damageTaken.hits > 0 then
+        cleanupOldHits(damageTaken, GetTime())
+    end
+end)
+
+-- Event forwarding
+f:SetScript("OnEvent", function(self, event, ...)
+    damageTaken:Update(event, ...)
+end)
+
+-- Register damage handler
+damageTaken:RegisterHandler("UNIT_COMBAT", function(self, now, unitTarget, event, flagText, amount, schoolMask)
+    if unitTarget ~= "player" then return end
+
+    -- Process damage amount and type
+    local damageAmount = tonumber(amount) or 0
+    local damageType = "Unknown"
+      
+    -- Map damage school types
+    local schoolTypes = {
+        [1] = "Physical",
+        [2] = "Holy",
+        [4] = "Fire",
+        [8] = "Nature",
+        [16] = "Frost",
+        [32] = "Shadow",
+        [64] = "Arcane"
+    }
+    damageType = schoolTypes[schoolMask] or "Unknown"
+      
+    -- Record hit details
+    table.insert(self.hits, {
+        time = now,
+        amount = damageAmount,
+        type = damageType,
+        isCrit = flagText == "CRITICAL",
+        isCrushing = flagText == "CRUSHING",
+        isGlancing = flagText == "GLANCING"
+    })
+      
+    cleanupOldHits(self, now)
+end)
+
+-- Register in global state
+LR.state.damage_taken = damageTaken
+```
+
+
+## index
+
+### Create Directory Structure - Shell
+
+This command utilizes `mkdir -p` to create the necessary directory structure for your LR Framework project. It ensures that the `scripts/LRRoutines` directory is created, including any necessary parent directories, facilitating a clean and organized project layout.
+
+```shell
+mkdir -p scripts/LRRoutines
+```
+
+
+### Configure Load Order - JSON
+
+This JSON configuration defines the order in which LR Framework routines are loaded. The file paths specified (without `.lua` extensions) dictate the execution sequence, ensuring that dependencies are met and the application initializes correctly. The framework automatically appends the `.lua` extension during loading.
+
+```json
+[
+    "Main",
+    "Routines/Warrior/Specialisation/Spellbook",
+    "Routines/Warrior/Specialisation/Interface",
+    "Routines/Warrior/Specialisation/Rotation"
+]
+```
+
+
+### Initialize Namespace Object - Lua
+
+This code snippet demonstrates how to initialize an empty Lua table to serve as your custom namespace. Namespaces are crucial in LR for preventing naming conflicts and organizing your code effectively. This empty table is the foundation for all your custom routines and data.
+
+```lua
+YourNamespace = {}  
+```
+
+
+## interface/config-integration
+
+### Multiple GUI Settings Configuration
+
+An example showcasing how to configure multiple GUI elements (Checkbox, Slider, Dropdown) within categories and tabs, each with a unique 'key' for persistence. This demonstrates structured UI configuration for graphics settings.
+
+```lua
+gui:Category("Graphics")
+   :Tab("Quality")
+   :Checkbox({
+        text = "Enable Shadows",
+        key = "graphics.shadows",
+        default = true
+   })
+   :Slider({
+        text = "View Distance",
+        key = "graphics.viewDistance",
+        min = 1,
+        max = 10,
+        default = 5
+   })
+   :Dropdown({
+        text = "Texture Quality",
+        key = "graphics.textures",
+        options = {
+            { text = "Low", value = "low" },
+            { text = "High", value = "high" }
+        },
+        default = "high"
+   })
+```
+
+
+### Saving and Loading GUI Element Configuration
+
+Illustrates the basic structure for saving and loading configuration for a GUI element, specifically a checkbox. Providing a 'key' ensures the element's state is automatically managed by the configuration system.
+
+```lua
+gui:Checkbox({
+    text = "Enable Feature",
+    key = "feature.enabled", -- Config key
+    default = false         -- Default value
+})
+```
+
+
+## interface/config-system
+
+### Organize Configuration Keys Hierarchically in Lua
+
+Demonstrates the best practice of organizing configuration keys hierarchically using dots (.). This improves readability and maintainability compared to flat key structures. Example shows organizing healing settings for different group types.
+
+```lua
+-- Good: Organized and clear
+LR.Config:Write("healing.tanks.minHealth", 60)
+LR.Config:Write("healing.raid.minHealth", 80)
+
+-- Avoid: Flat and unclear
+LR.Config:Write("tankMinHealth", 60)
+LR.Config:Write("raidMinHealth", 80)
+```
+
+
+### Get All Configuration Settings in Lua
+
+Retrieves all currently saved configuration settings. This function returns a table containing all key-value pairs of the configuration, which can then be iterated over to process all settings.
+
+```lua
+-- Get all settings
+local allSettings = LR.Config:GetAll()
+for key, value in pairs(allSettings) do
+    print(key, value)
+end
+```
+
+
+### Use Consistent Configuration Keys with Constants in Lua
+
+Illustrates using constants or a table to define configuration keys. This ensures consistency across the addon when reading or writing settings, reducing the chance of typos and making refactoring easier.
+
+```lua
+-- Define keys as constants
+local CONFIG_KEYS = {
+    ENABLED = "feature.enabled",
+    THRESHOLD = "feature.threshold"
+}
+
+-- Use constants for consistency
+LR.Config:Read(CONFIG_KEYS.ENABLED)
+LR.Config:Write(CONFIG_KEYS.THRESHOLD, 75)
+```
+
+
+### Handle Configuration Loading Errors Safely in Lua
+
+Provides a robust method for loading configuration values by including error handling. If a configuration key fails to load (returns nil), it prints a warning and returns a specified default value, preventing potential addon errors.
+
+```lua
+local function SafeLoadConfig(key, default)
+    local value = LR.Config:Read(key)
+    if value == nil then
+        print("Warning: Failed to load config for " .. key)
+        return default
+    end
+    return value
+end
+```
+
+
+## interface/overview
+
+### Create Basic GUI Structure with LR.GuiBuilder
+
+This snippet demonstrates the basic usage of the LR.GuiBuilder to create a simple UI structure with a category, tab, header, checkbox, and slider. It utilizes a fluent interface for chaining method calls. No external dependencies beyond the LR framework are required.
+
+```lua
+local gui = LR.GuiBuilder:New()
+gui:Category("My Category")
+   :Tab("General")
+   :Header({ text = "Settings" })
+   :Checkbox({ text = "Enable Feature" })
+   :Slider({ text = "Speed" })
+```
+
+
+## interface/ui-elements
+
+### Creating a Dropdown Menu with Options in Lua
+
+Illustrates how to implement a dropdown menu using `gui:Dropdown()`. The snippet shows how to define the list of `options`, set a `default` selection, and use the `key` parameter for persistence. It also includes optional parameters like `multi` for multi-select functionality and an `onChange` handler.
+
+```lua
+gui:Dropdown({	
+    text = "Quality",	
+    key = "graphics.quality",	
+    options = {	
+        { text = "Low", value = "low" },	
+        { text = "Medium", value = "medium" },	
+        { text = "High", value = "high" }	
+    },	
+    default = "medium",	
+    multi = false,			-- Set to true for multi-select  
+    width = 200,			-- Optional  
+    tooltip = "Select quality level",	
+    onChange = function(self, value)	
+        print("Quality changed:", value)	
+    end	
+})
+```
+
+
+### Creating a Button with onClick Event in Lua
+
+Provides a code example for creating a functional button using `gui:Button()`. It includes optional parameters like width, height, and tooltip, and demonstrates how to define an `onClick` function that executes a specified action, such as printing a message to the console.
+
+```lua
+gui:Button({	
+    text = "Click Me",	
+    width = 120, 		-- Optional  
+    height = 25, 		-- Optional  
+    tooltip = "Click this button to do something", 	-- Optional tooltip  
+    onClick = function()   
+        print("clicked")   
+    end	
+})
+```
+
+
+### Implementing a Color Picker with State Saving in Lua
+
+Provides an example of how to create a color picker UI element using `gui:ColorPicker()`. It includes parameters for setting the `text`, a `key` for saving the selected color, a `default` color value, and optional `width` and `height`. The `onChange` function allows for handling color changes and applying them to other UI elements.
+
+```lua
+gui:ColorPicker({	
+    text = "Text Color",	
+    key = "ui.textColor", 		-- Config key for saving  
+    default = {r = 1, g = 0, b = 0, a = 1},		-- Default to red  
+    width = 200,			-- Optional  
+    height = 20,			-- Optional  
+    tooltip = "Choose the color for UI text",	
+    onChange = function(self, color)	
+        print("Color changed:", color.r, color.g, color.b, color.a)	
+        -- Example: Apply the color  
+        -- MyAddonFrame.text:SetTextColor(color.r, color.g, color.b, color.a)	
+    end	
+})
+```
+
+
+## item-handler/item-functions
+
+### Basic Item Usage Example
+
+Demonstrates a practical application of item handling, specifically using a health potion when the player's health is low. It combines item creation, usability checks, and item usage in a conditional scenario.
+
+```lua
+-- Create and use a health potion
+local potion = LR.ItemHandler.NewItem(33447)
+
+if player.hp < 50 and potion:usable(player) then
+    potion:use(player)
+end
+```
+
+
+### Create New Item Instance
+
+Creates a new item instance in LR. This is the primary method for initializing an item object, which can then be used to access its properties and methods. No external dependencies are required beyond the LR API.
+
+```lua
+local item = LR.ItemHandler.NewItem(12345)
+```
+
+
+## item-handler/overview
+
+### Basic Item Creation and Usage in Lua
+
+Demonstrates how to create a new item object using its ID and then check if it's usable before using it on a player. This is fundamental for integrating items into rotation logic.
+
+```lua
+-- Basic item creation  
+local healthPotion = LR.ItemHandler.NewItem(33447)  
+  
+-- Using an item  
+if healthPotion:usable(player) then  
+    healthPotion:use(player)  
+end  
+```
+
+
+## lists-and-units/Lists
+
+### Combining Distance Filtering and Unit Selection
+
+Shows a practical application combining 'within' to get nearby enemies and 'first' to select the lowest health one for an attack. It also demonstrates using 'around' to count dangerous enemies near a tank.
+
+```lua
+-- Get enemies within melee range and attack the lowest health one  
+local meleeEnemies = LR.activeenemies:within(5)  
+local target = meleeEnemies:first(function(unit)  
+    return unit.hp < 30  
+end)  
+  
+-- Count dangerous enemies around the tank  
+local dangerousCount, totalCount, dangerousEnemies = LR.activeenemies:around(tank, 10, function(unit)  
+    return unit.casting or unit.channeling  
+end)  
+  
+if dangerousCount > 2 then  
+    print("Chuckles, im in Danger")  
+end  
+```
+
+
+### Managing Group Members with List Methods
+
+Illustrates how to use the 'group' list and its 'each' method to iterate through party or raid members and apply actions, such as healing, based on their health and proximity to the player.
+
+```lua
+-- Heal group members  
+group:each(function(member)  
+    if member.hp < 80 and member.distanceto(player) < 40 then  
+        -- Heal the group member  
+        return true  
+    end  
+end)  
+```
+
+
+### Retrieving the First Matching Unit from a List
+
+Demonstrates the 'first' method, which returns the first unit in a list that matches the criteria specified in the callback function. If no unit matches, it returns nil.
+
+```lua
+local target = enemies:first(function(unit)  
+    return unit.hp < 20  
+end)  
+```
+
+
+## lists-and-units/VirtualUnits
+
+### Tank Virtual Unit Resolution and Usage in Lua
+
+Explains the resolution order for the 'tank' virtual unit and provides Lua code examples for checking its health and proximity to the player. It highlights how to safely interact with the tank unit.
+
+```lua
+local tank = LR.UnitManager.tank
+
+-- Examples
+if tank.exists then
+    if tank.hp < 50 then
+        -- Heal the tank
+    end
+      
+    if tank.distanceto(player) < 40 then
+        -- Stay close to tank
+    end
+end
+```
+
+
+## misc/CombatLogReader
+
+### Example: Monitor Interrupts - Lua
+
+Demonstrates registering an event handler for `SPELL_INTERRUPT`. This example extracts information about who interrupted which spell cast by whom, using the `eventData.params`.
+
+```lua
+EventHandler:RegisterEvent("SPELL_INTERRUPT", function(eventData)  
+    local _, _, _, extraSpellId, extraSpellName = unpack(eventData.params)  
+    print(string.format("%s interrupted %s's %s",   
+        eventData.source.name,
+        eventData.dest.name,
+        extraSpellName))
+end)
+
+```
+
+
+### Example: Track Player Spells - Lua
+
+An example of registering a combat log event handler for `SPELL_CAST_SUCCESS`. It specifically checks if the player is the source of the spell cast and prints the spell name and ID.
+
+```lua
+EventHandler:RegisterEvent("SPELL_CAST_SUCCESS", function(eventData)  
+    if eventData.source.guid == UnitGUID("player") then  
+        local spellId, spellName = unpack(eventData.params)  
+        print(string.format("Cast %s (ID: %d)", spellName, spellId))
+    end  
+end)
+
+```
+
+
+### Event Handler API Documentation
+
+This section details the Event Handler API, including how to register combat log and normal WoW events, structure of event data, filtering capabilities, and provides examples.
+
+```APIDOC
+## Event Handler API
+
+### Description
+The Event Handler provides a streamlined way to handle both combat log events and normal WoW events. It offers filtering capabilities and structured event data.
+
+### Basic Usage
+```lua
+local EventHandler = LR.EventHandler
+
+-- Register a combat log event handler
+EventHandler:RegisterEvent("SPELL_CAST_SUCCESS", function(eventData)
+    if eventData.source.guid == UnitGUID("player") then
+        print(string.format("You cast %s", C_Spell.GetSpellLink(eventData.params[1])))
+    end
+end)
+
+-- Register a normal WoW event handler
+EventHandler:RegisterNormalEvent("PLAYER_ENTERING_WORLD", function()
+    print("Player entered the world")
+end)
+```
+
+## Event Registration
+
+### Combat Log Events
+```lua
+EventHandler:RegisterEvent(eventType, handlerFunction)
+```
+*   `eventType` (string) - Required - Combat log event type (e.g., "SPELL_CAST_SUCCESS")
+*   `handlerFunction` (function) - Required - Function that receives the structured event data
+
+### Normal Events
+```lua
+EventHandler:RegisterNormalEvent(eventType, handlerFunction)
+```
+*   `eventType` (string) - Required - WoW event name (e.g., "PLAYER_ENTERING_WORLD")
+*   `handlerFunction` (function) - Required - Function that receives the raw event parameters
+
+## Event Data Structure
+Combat log events provide structured data. Example for `SPELL_CAST_SUCCESS`:
+```lua
+eventData = {
+    timestamp = 1234567890,
+    event = "SPELL_CAST_SUCCESS",
+    source = {
+        guid = "Player-1234-5678",
+        name = "PlayerName",
+        flags = sourceFlags,
+        raidFlags = sourceRaidFlags
+    },
+    dest = {
+        guid = "Target-1234-5678",
+        name = "TargetName",
+        flags = destFlags,
+        raidFlags = destRaidFlags
+    },
+    params = { spellId, spellName, ... } -- Additional event-specific parameters
+}
+```
+
+## Event Filtering
+Add filters to process only specific events.
+```lua
+-- Only process events where the player is the source
+EventHandler:AddFilter("SPELL_CAST_SUCCESS", function(eventData)
+    return eventData.source.guid == UnitGUID("player")
+end)
+```
+*   `eventType` (string) - Required - The combat log event type to add a filter for.
+*   `filterFunction` (function) - Required - A function that takes `eventData` and returns `true` to process the event, or `false` to ignore it.
+
+## Examples
+
+### Track Player Spells
+```lua
+EventHandler:RegisterEvent("SPELL_CAST_SUCCESS", function(eventData)
+    if eventData.source.guid == UnitGUID("player") then
+        local spellId, spellName = unpack(eventData.params)
+        print(string.format("Cast %s (ID: %d)", spellName, spellId))
+    end
+end)
+```
+
+### Monitor Interrupts
+```lua
+EventHandler:RegisterEvent("SPELL_INTERRUPT", function(eventData)
+    local _, _, _, extraSpellId, extraSpellName = unpack(eventData.params)
+    print(string.format("%s interrupted %s's %s",
+        eventData.source.name,
+        eventData.dest.name,
+        extraSpellName))
+end)
+```
+
+### Track Group Changes
+```lua
+EventHandler:RegisterNormalEvent("GROUP_ROSTER_UPDATE", function()
+    print("Group composition changed")
+end)
+```
+
+## Common Combat Log Events
+
+### Spell Events
+*   `"SPELL_CAST_START"` - When a spell cast begins
+*   `"SPELL_CAST_SUCCESS"` - When a spell cast completes
+*   `"SPELL_CAST_FAILED"` - When a spell cast fails
+*   `"SPELL_AURA_APPLIED"` - When a buff/debuff is applied
+*   `"SPELL_AURA_REMOVED"` - When a buff/debuff is removed
+*   `"SPELL_INTERRUPT"` - When a spell is interrupted
+*   `"SPELL_DISPEL"` - When a buff/debuff is dispelled
+
+### Damage & Healing
+*   `"SPELL_DAMAGE"` - Spell damage
+*   `"SWING_DAMAGE"` - Melee damage
+*   `"SPELL_HEAL"` - Healing
+*   `"SPELL_PERIODIC_HEAL"` - HoT healing
+
+### Unit Events
+*   `"UNIT_DIED"` - When a unit dies
+*   `"PARTY_KILL"` - When your party kills something
+
+## Best Practices
+
+### Performance
+*   Use filters to reduce unnecessary event processing.
+*   Keep event handlers lightweight.
+*   Consider batching frequent events.
+*   Clean up handlers when no longer needed.
+
+### Common Pitfalls
+*   Don't register too many handlers for the same event.
+*   Be careful with string operations in high-frequency events.
+*   Remember that some events fire very frequently.
+*   Handle nil cases in event data.
+
+### Event Processing Notes
+*   Combat log events provide more structured data than normal events.
+```
+
+
+### Example: Track Group Changes - Lua
+
+An example of registering a normal WoW event handler for `GROUP_ROSTER_UPDATE`. This handler simply prints a message whenever the group composition changes.
+
+```lua
+EventHandler:RegisterNormalEvent("GROUP_ROSTER_UPDATE", function()  
+    print("Group composition changed")
+end)
+
+```
+
+
+## misc/Draw
+
+### Draw Unit Markers Example
+
+An example demonstrating how to register a callback to draw red circles around enemy units that are alive. It utilizes `Draw:GetColor` for color management and `canvas:Circle` for drawing.
+
+```lua
+Draw:RegisterCallback("unitMarkers", function(canvas, unit)
+    if unit.enemy and unit.alive then
+        -- Draw red circle for enemies
+        local r, g, b, a = Draw:GetColor("Red", 70)
+        canvas:SetColor(r, g, b, a)
+        canvas:Circle(unit.position.x, unit.position.y, unit.position.z, 1)
+    end
+end, "units")
+```
+
+
+### Draw Class-Colored Names Example
+
+An example showcasing how to draw unit names with colors corresponding to their class. It uses `Draw:GetColor` with the unit's class name and `canvas:Text` to render the name.
+
+```lua
+Draw:RegisterCallback("classNames", function(canvas, unit)
+    if unit.player then
+        local r, g, b, a = Draw:GetColor(unit.class2, 255)
+        canvas:SetColor(r, g, b, a)
+        canvas:Text(unit.name,"GameFontHighlight", unit.position.x, unit.position.y, unit.position.z + 2)
+    end
+end, "units")
+```
+
+
+## misc/Macro
+
+### Macro System API
+
+This section details the core functionalities of the Macro System, including command registration and usage examples.
+
+```APIDOC
+## Macro System API
+
+### Description
+The Macro System provides a way to create and manage slash commands in the game. It allows you to register custom commands that can be executed through chat.
+
+### Basic Usage
+On first run, you'll be prompted to set a prefix via a GUI window. This preference is saved for future sessions.
+
+```lua
+local Macro = LR.Macro  
+
+-- Register a simple command  
+Macro:RegisterCommand("hello", function(name)  
+    print("Hello, " .. (name or "stranger") .. "!")  
+end, "Greets a player")  
+```
+
+## Command Registration
+
+### RegisterCommand
+
+#### Description
+Registers a new custom slash command.
+
+#### Method
+`Macro:RegisterCommand(command, callback, description)`
+
+#### Parameters
+
+##### Path Parameters
+* **command** (string) - Required - The name of the command to register.
+* **callback** (function) - Required - The function to execute when the command is called.
+* **description** (string) - Optional - A description for the command, used in help text.
+
+### Examples
+
+#### Basic Command
+
+##### Description
+Registers a simple 'hello' command that greets a player.
+
+##### Code Example
+
+```lua
+-- Creates /LR greet [name]
+Macro:RegisterCommand("greet", function(name)  
+    print("Hello, " .. (name or "stranger") .. "!")  
+end, "Greets a player")  
+```
+
+#### Command with Arguments
+
+##### Description
+Registers a 'cast' command that allows casting a specified spell.
+
+##### Code Example
+
+```lua
+-- Creates /LR cast [spell]
+Macro:RegisterCommand("cast", function(spell)  
+    if spell then  
+        LR.Spell:Cast(spell)  
+    end  
+end, "Casts the specified spell")  
+```
+
+#### Help Command
+
+##### Description
+Demonstrates how to access the built-in help command to list all registered commands and their descriptions.
+
+##### Usage
+* `/LR` - Lists all available commands.
+* `/LR help` - Same as above.
+
+Both commands will display a list of all registered commands with their descriptions in the format:
+
+```
+/LR commandName - Command description  
+```
+
+## Best Practices
+
+### Command Design
+* Use clear, descriptive command names.
+* Always provide a helpful description.
+* Handle missing arguments gracefully.
+* Keep commands simple and focused.
+
+### Common Pitfalls
+* Avoid command names that might conflict with other addons.
+* Don't register commands in performance-critical code.
+* Remember to handle all possible argument cases.
+```
+
+
+### Register a Command with Arguments
+
+Illustrates how to register a command that accepts arguments. This example shows a 'cast' command that takes a spell name and uses it to cast the spell via LR.Spell:Cast().
+
+```lua
+-- Creates /LR cast [spell]
+Macro:RegisterCommand("cast", function(spell)
+    if spell then
+        LR.Spell:Cast(spell)
+    end
+end, "Casts the specified spell")
+```
+
+
+### Register a Basic 'hello' Command
+
+Demonstrates the basic usage of the Macro system to register a simple command that prints a greeting. It shows how to provide a command name, a callback function, and an optional description.
+
+```lua
+local Macro = LR.Macro
+
+-- Register a simple command
+Macro:RegisterCommand("hello", function(name)
+    print("Hello, " .. (name or "stranger") .. "!")
+end, "Greets a player")
+```
+
+
+## misc/Toast
+
+### Show Example Toast Notification with Dynamic Content (Lua)
+
+An example of using the Toast:Show method with dynamically generated content, such as a player's name. This illustrates how to create personalized toast messages.
+
+```lua
+-- Show a welcome message
+local playerName = UnitName("player")
+LR.Toast:Show(
+    string.format("Welcome, %s!", playerName),
+    "Type /LR for settings"
+)
+```
+
+
+## missiles/properties
+
+### Access Missile Unit and Target Properties
+
+Retrieve information about the units associated with the missile, such as the creator unit, the target unit, and the source GUID.
+
+```Lua
+missile.creator  -- Unit that created the missile
+missile.target   -- Target unit of the missile
+missile.source   -- Source GUID
+```
+
+
+### Missile Unit Properties
+
+Get information about the creator, target, and source of a missile.
+
+```APIDOC
+## Missile Unit Properties
+
+Retrieves information about the units associated with the missile.
+
+#### Endpoint
+
+`/websites/LR-wow_wtf/missile/unit_properties`
+
+#### Parameters
+
+None
+
+#### Response
+
+- **creator** (string) - Unit that created the missile
+- **target** (string) - Target unit of the missile
+- **source** (string) - Source GUID
+```
+
+
+### Access Missile Current Position Coordinates
+
+Retrieve the current X, Y, and Z coordinates of a missile. The 'currentposition' property provides a convenient way to get all coordinates as a table.
+
+```Lua
+missile.cx  -- Current X coordinate
+missile.cy  -- Current Y coordinate
+missile.cz  -- Current Z coordinate
+-- Or use:
+missile.currentposition -- Returns {x, y, z} table
+```
+
+
+## spell
+
+### LR WoW Spell Casting Examples
+
+Demonstrates creating spell objects for single-target spells (like Fireball) and AOE spells (like Blizzard), and then casting them. Includes checks for castability and optimal AOE positioning.
+
+```lua
+-- Create a new spell object for Fireball  
+local fireball = LR.SpellHandler.NewSpell(133, {  
+})
+  
+-- Check if we can cast Fireball on our target  
+if fireball:castable("target") then  
+    -- Cast Fireball  
+    fireball:cast("target")  
+end  
+  
+-- Create an AOE spell like Blizzard  
+local blizzard = LR.SpellHandler.NewSpell(190356, {  
+    isSkillshot = true,  
+    radius = 8  
+})
+  
+-- Cast Blizzard optimally on groups of enemies  
+blizzard:smartaoe("target", {  
+    offsetMax = 30,  
+    filter = function(unit, distance, position)  
+        return unit.enemy and not unit.dead  
+    end  
+})
+```
+
+
+### Getting Fractional Spell Charges (Lua)
+
+Illustrates using the `chargesleft()` method to get the current fractional charges remaining, including any partially regenerated charges. This returns a numerical value.
+
+```lua
+local fractionalCharges = spell:chargesleft() -- Returns number
+```
+
+
+### Get Spell Cast Time
+
+Retrieves the cast time of a spell in seconds. This function returns a numerical value representing the duration of the spell cast.
+
+```lua
+local castTime = spell:getcasttime() -- Returns number (seconds)  
+```
+
+
+### Get Talent Spell Rank
+
+Retrieves the current rank of a talent spell. This function returns a numerical value representing the spell's rank.
+
+```lua
+local rank = spell:rank() -- Returns number  
+```
+
+
+### Getting Maximum Spell Charges (Lua)
+
+Shows how to obtain the maximum number of charges a spell can have using the `maxcharges()` method. This returns a numerical value.
+
+```lua
+local maxCharges = spell:maxcharges() -- Returns number
+```
+
+
+## status-frame/basic-usage
+
+### Example: Adding Class-Specific Toggles
+
+An example showcasing how to add class-specific toggles, such as 'Burst' and 'Defensive' modes, to the rotation system within the global status frame.
+
+```Lua
+    LR.Rotation.BurstToggle = LR:AddGlobalToggle({
+        label = "Burst",
+        var = "my_burst_toggle",
+        icon = "Interface/Icons/Ability_Warrior_BattleShout",
+        tooltip = "Enable burst mode rotation"
+    })
+    LR.Rotation.DefensiveToggle = LR:AddGlobalToggle({
+        label = "Defensive",
+        var = "my_defensive_toggle",
+        icon = "Interface/Icons/Ability_Warrior_DefensiveStance",
+        tooltip = "Use defensive cooldowns"
+    })
+end
+
+if LR.Rotation.DefensiveToggle:GetValue() then
+    -- Do Defensives
+end  
+```
+
+
+### Controlling Toggle States Programmatically
+
+Provides examples of how to programmatically interact with a toggle after it has been created. This includes getting its current value, setting its value, and updating its tooltip text.
+
+```Lua
+-- Get current value  
+local isEnabled = myToggle:GetValue()  
+
+-- Set value programmatically  
+myToggle:SetValue(true)  
+
+-- Update tooltip text  
+myToggle:SetCustomText("New tooltip text")  
+```
+
+
+## unit-properties/AuraTracking
+
+### Track Single Aura by ID - Lua Example
+
+This Lua example demonstrates tracking a single aura by its ID. The callback function prints messages when the aura is added/updated or removed from a unit. The returned function can be called to stop tracking.
+
+```lua
+-- Track a single aura by ID  
+local unregisterTracker = LR.TrackAuras(462854, function(unit, aura, event)  
+    if event == "ADD_OR_UPDATE" then  
+        print("Aura detected:", aura.name, "on", unit.name)  
+    elseif event == "REMOVE" then  
+        print("Aura removed:", aura.name, "from", unit.name)  
+    end  
+end)  
+  
+-- When you want to stop tracking:  
+unregisterTracker()
+```
+
+
+### Track Multiple Auras by ID or Name - Lua Example
+
+This Lua example shows how to track multiple auras simultaneously using an array of spell IDs and names. The callback function is a placeholder for custom logic. The tracker can be unregistered by calling the returned function.
+
+```lua
+-- Track multiple auras  
+local aurasToTrack = {  
+    462854,  -- First aura ID  
+    123456,  -- Second aura ID  
+    "Power Word: Shield" -- Aura by name  
+}  
+  
+local unregisterTracker = LR.TrackAuras(aurasToTrack, function(unit, aura, event)  
+    -- Handler code  
+end)
+```
+
+
+### Count Units Affected by Debuffs - Lua Example
+
+This advanced Lua example tracks important debuffs and counts the number of affected units. It uses a table to keep track of unique units and updates a counter based on aura events. The tracker is unregistered using the returned function.
+
+```lua
+-- Track important debuffs and count affected units  
+local debuffCount = 0  
+local affectedUnits = {}  
+  
+local unregisterTracker = LR.TrackAuras({12345, 67890}, function(unit, aura, event)  
+    if event == "ADD_OR_UPDATE" and not affectedUnits[unit.guid] then  
+        affectedUnits[unit.guid] = true  
+        debuffCount = debuffCount + 1  
+        print("Units affected by tracked debuffs:", debuffCount)  
+    elseif event == "REMOVE" then  
+        affectedUnits[unit.guid] = nil  
+        debuffCount = debuffCount - 1  
+    end  
+end)
+```
+
+
+## unit-properties/Unit%20-%20Properties
+
+### Lua Unit and Target Management with LR API
+
+Demonstrates how to get player and target units using LR.UnitManager, perform basic checks like existence, enemy status, and health, and interact with target positioning and facing. It also shows how to check for specific auras, their remaining duration, stack counts, and presence from a list. Finally, it includes examples for checking casting status, interruptibility, and distance for combat actions.
+
+```lua
+-- All property accesses are actually method calls through metatables
+local target = LR.UnitManager:Get("target")
+local player = LR.UnitManager:Get("player")
+
+-- Basic target checks
+if target.exists and target.enemy and target.alive then
+    if target.hp < 20 and target.distanceto(player) < 30 then
+        -- Execute logic here
+    end
+end
+
+-- Example showing type checks and positioning
+if target.ishumanoid and not target.ismechanical then
+    if target.playerfacing then
+        -- Use frontal cone melee ability on humanoid target
+    end
+end
+
+-- Aura examples
+if target.exists then
+    -- Check for a specific debuff
+    local hasDeBuff = target.aura(12345)
+    if hasDeBuff then
+        local remaining = target.auraremains(12345)
+        if remaining < 3 then
+            -- Refresh debuff before it expires
+        end
+    end
+
+    -- Check aura stacks
+    local stacks = target.auracount(67890)
+    if stacks >= 5 then
+        -- Use ability that consumes stacks
+    end
+
+    -- Check for any aura from a list
+    local auraList = {12345, 67890, 11223}
+    if target.aurafrom(auraList) then
+        -- Unit has at least one of the auras
+    end
+end
+
+-- Combat and casting checks
+if target.exists and target.casting then
+    if target.castinginterruptible and target.castingpct > 50 then
+        if player.distanceto(target) < 30 then
+            -- Interrupt the cast
+        end
+    end
+end
+
+```
+
+
+## unit-properties/Unit%20Methods
+
+### PvP Burst Detection
+
+PvP unit objects expose cached offensive-cooldown detection through the
+framework burst list. The result uses the normal aura cache and does not
+perform a full aura scan for every property access.
+
+```lua
+if enemy.bursting then
+    local spellID = enemy.burstspellid
+    local level = enemy.burstlevel
+    local damageType = enemy.burstdamagetype -- magic, physical, mixed, or unknown
+end
+```
+
+Useful Watchdog expressions include:
+
+```text
+target.bursting
+target.burstspellname
+EnemyHealer.bursting
+EnemyHealer.burstlevel
+```
+
+### Position and Movement Checks
+
+Provides examples for checking unit positions and movement relative to other units. This includes verifying if a unit is behind another and checking distance combined with line of sight.
+
+```Lua
+local target = LR.UnitManager:Get("target")
+local player = LR.UnitManager:Get("player")
+
+-- Check if player is behind target
+if player.behind(target) then
+    -- Use backstab ability
+end
+
+-- Check distance and line of sight
+if target.distanceto(player) < 30 and target.haslos(player) then
+    -- Cast ranged ability
+end
+```
+
+PvP control state is also available on every framework unit, including virtual
+units such as `EnemyHealer`:
+
+```lua
+if not EnemyHealer.cc and not EnemyHealer.immune then
+    -- A CC callback may continue with DR/category checks.
+end
+```
+
+Available Boolean properties are:
+
+- `cc` / `iscc` — currently affected by tracked hard crowd control.
+- `immune` / `ccimmune` / `immunities` / `isimmune` — currently protected by a
+  tracked general CC-immunity aura.
+- `immunemagic` — immune to magical CC such as disorient/incapacitate effects.
+- `immunephysical` — immune to physical CC such as stuns.
+
+The aliases are available on every framework unit, including `enemy`,
+`target`, `focus`, arena units, and virtual units such as `EnemyHealer`.
+They use the shared hard-CC and CC-immunity aura lists.
+
+### Healer Cast Control and Cast Results
+
+The spell handler exposes protected stop-casting and timing helpers:
+
+```lua
+local stopped, reason = LR.StopCasting()
+local current = LR.SpellHandler.GetCurrentCastInfo()
+local gcdRemaining = spell:currentgcd()
+local queueWindow = spell:queuewindow()
+local latencyMs = spell:latency()
+```
+
+`GetCurrentCastInfo()` returns `kind`, `spellID`, `remains`, `percent`, and
+`interruptible` for the player’s current cast or channel.
+
+`spell:cast(unit)` keeps its existing Boolean return for compatibility. After a
+cast request, the structured request can be inspected with:
+
+```lua
+local request = spell:lastcastrequest()
+if request then
+    print(request.requestID, request.status, request.reason)
+end
+```
+
+Requests transition through `submitted`, `success`, `failed`,
+`interrupted`, or `rejected`. A request can also be retrieved by ID with
+`LR.SpellHandler:GetCastRequest(requestID)`.
+
+For range-sensitive healer decisions, `spell:inrangeResult(unit)` returns two
+values: `inRange` and `known`. This distinguishes a confirmed out-of-range
+result from an unavailable or protected range result.
